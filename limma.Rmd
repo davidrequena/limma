@@ -1,0 +1,279 @@
+---
+title: "Guide for the Differential Expression Analysis of RNAseq data using limma"
+author: "David Requena and Jamie Saltsman"
+date: "11/27/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Guide for the Differential Expression Analysis of RNAseq data using limma-voom
+# Including also a commented section about the limma-trend approach
+
+## 1. SET UP
+
+### Install and/or call the required libraries
+
+This first block is just to install the dependencies. If already installed, just left this commented.
+
+```{r Install libraries, eval=FALSE, echo=FALSE}
+# # Import necessary libraries
+# install.packages('knitr')
+# install.packages('gplots')
+# install.packages('ggplot2')
+ 
+# source("https://bioconductor.org/biocLite.R")
+# biocLite("edgeR", dependencies=TRUE)
+# biocLite("limma", dependencies=TRUE)
+# biocLite("Glimma", dependencies=TRUE)
+# biocLite("biomaRt", dependencies=TRUE)
+# biocLite("pheatmap", dependencies=TRUE)
+```
+This block is to call all the required libraries:
+
+```{r, echo=FALSE}
+library("knitr", quietly = T)
+library("limma", quietly = T)
+library("Glimma", quietly = T)
+library("edgeR", quietly = T)
+library("biomaRt", quietly = T)
+library("gplots", quietly = T)
+library("ggplot2", quietly = T)
+```
+
+### Input sample metadata
+
+In this block, you just need to change the working directory:
+```{r "setup"}
+# require("knitr")
+knitr::opts_knit$set(root.dir = "../RNAseq_data") # <<<------------- *** WORKING DIRECTORY ***
+
+# These two tables have to be in your working directory:
+# - A table containing the samples' data (features of interest) and
+# - A table with the gene counts by sample
+sample_data <- "samples_data.tsv"
+counts_data <- "counts_data.tsv"
+```
+
+This block is to read the samples' data.
+There is also an option to work with subsets.
+```{r, echo=FALSE}
+#########################
+# Input sample metadata #
+#########################
+sampledata <- data.frame(read.csv(sample_data, sep = "\t", header = TRUE))
+
+# This is an example of how to work with a subset of the data:
+#sampledata <- sampledata[sampledata$lib_prep != "A",]
+
+sampledata$library_prep <- factor(sampledata$library_prep)
+droplevels(sampledata$id)
+
+# To sort the table by sample name:
+sampledata <- sampledata[order(sampledata$id), ]
+sampledata$patient <- as.character(sampledata$patient)
+rownames(sampledata) <- sampledata$id
+
+nsamples <- nrow(sampledata)
+```
+
+This block is to read the tables with the counts.
+There is also an option to filter out some genes (blacklist).
+```{r, echo=FALSE}
+######################
+# Input counts table #
+######################
+countstable <- data.frame(read.csv(counts_data, sep = "\t", header = FALSE), stringsAsFactors = FALSE)
+
+# Filter out some genes in a pre defined black list:
+blacklist <- data.frame(read.csv("blacklist.tsv", sep = "\t", header = TRUE))
+countstable <- countstable[!(countstable[,1] %in% blacklist[,1]), ]
+
+# Save the gene list, to be used later as row names:
+generows <- unlist(countstable[,1], use.names=FALSE)
+generows <- generows[-1]
+invisible(droplevels(generows))
+
+# This column contains the gene names, we don't need it anymore:
+countstable[,1] <- NULL
+
+# Sort the table by sample name:
+countstable.sorted <- countstable[,order(countstable[1,])]
+
+# Save the samples list, to be used later as column names:
+genecols <- unlist(countstable.sorted[1,], use.names=FALSE)
+droplevels(genecols)
+
+# Convert the values on the table from characters to numbers:
+# First, any string should be removed (names on the first row)
+countstable.sorted <- countstable.sorted[-1,]
+# Then, do the conversion
+countstable.num <- as.data.frame(apply(countstable.sorted, c(1,2), as.integer))
+# Finally, add the row and column names:
+rownames(countstable.num) <- generows
+colnames(countstable.num) <- genecols
+
+# If the sampledata table was filtered in the chunk above, this line will filter
+# the countstable as well. If not, this will do nothing:
+countstable.num <- countstable.num[colnames(countstable.num) %in% sampledata$id]
+
+#####################
+# Remove empty rows #
+#####################
+countstable.num <- countstable.num[ rowSums(countstable.num) > 0, ]
+```
+
+## 2. Exploring the data
+This step will allow us to select which variables we need to include in the model
+The code and description are available in our previous guide: https://github.com/SimonLab-RU/DEseq2
+
+## 3. Data analysis
+
+### Model matrix
+Considering the variables chosen in the previous step, a model will be determined.
+A matrix representing this model is provided in this step.
+```{r, echo=FALSE}
+################
+# Model Matrix #
+################
+# Define the model (design) to use. In our case, our variable of interest is the sample type
+# (normal, tumor or metastasis). But, we have to control by:
+# library preparation -> lib_prep
+# patient -> lib_prep:nested_patient
+# Due patient is collinear with library prep, this should be represented by a combination
+# of lib_prep and a secondary variable (nested patient)
+
+# Specifying the base level
+sampledata$sample_type <- factor(sampledata$sample_type,
+                                 levels = c("normal", "primary", "metastasis"))
+str(sampledata$sample_type)
+
+# Model:
+# 1 represents the intercept, this is the base level of sample type (normal)
+mm <- model.matrix(~1 + sample_type + lib_prep + lib_prep:nested_patient,
+                   data = sampledata)
+
+# Sometimes, the resulting matrix has columns full of zeros. These should be removed:
+mm <- mm[ , colSums(mm) > 0]
+
+# Create the DGE object
+ds.limma <- DGEList(counts = countstable.num, genes = rownames(countstable.num))
+```
+
+### Prior filtering
+In order to select an appropriate cut-off, we need to analyze the density plots.
+The code and description are available in our previous guide: https://github.com/SimonLab-RU/edgeR
+
+#### Filter the dataset
+```{r, echo=FALSE}
+# Normalized log-counts per million
+lcpm <- cpm(ds.limma, log=TRUE, normalized.lib.sizes = T)
+
+# Boolean condition according the cut-off selected
+# after the examination of the density plots
+filtered <- rowSums(lcpm >= 1) >= 2
+
+# Number of genes remaining after the filtering
+sum(filtered)
+
+# Filtering the DGE list
+# The library sizes should be dropped, because these need to be recalculated
+ds.limma.f <- ds.limma[filtered, , keep.lib.sizes = F]
+```
+
+### Comparison
+```{r, echo=FALSE}
+# Normalizing for RNA composition, by finding a set of scaling factors for the library sizes
+# that minimize the log-fold changes between the samples for most genes.
+ds.limma.f <- calcNormFactors(ds.limma.f, method="TMM")
+
+# Then, two approaches can be used: voom or trend
+```
+
+#### Voom
+```{r, echo=FALSE}
+#####################################
+# Voom approach (precision weights) #
+#####################################
+# This is better when the library sizes are quite variable between samples
+
+# Voom transformation
+transf.voom <- voom(ds.limma.f, design = mm, plot=TRUE)
+
+# Fitting the model
+ds.fit <- lmFit(transf.voom, design = mm)
+colnames(ds.fit)
+
+# Specifying the contrast of interest
+ds.contrast <- contrasts.fit(ds.fit, contrasts = c(0,-1,1,0,0,0,0,0,0,0,0,0,0,0))
+
+# Compute statistics
+ds.contrast <- eBayes(ds.contrast)
+
+limma_result <- toptable(fit = ds.contrast,
+                         number = 20000,
+                         A = ds.contrast$Amean,
+                         adjust.method = "BH",
+                         sort.by = "p",
+                         p.value = 0.05)
+```
+
+#### Trend
+```{r, echo=FALSE}
+# ######################################
+# # Bayes/Treat approach (prior trend) #
+# ######################################
+# This approach is simple, fast and robuts, and usually work well if the ratio of
+# the largest library size to the smallest is not more than about 3-fold
+# 
+# logCPM <- cpm(ds.limma.f, log=TRUE, prior.count = 3)
+# ds.fit <- lmFit(logCPM, design = mm)
+# ds.contrast <- contrasts.fit(ds.fit, contrasts = c(0,-1,1,0,0,0,0,0,0,0,0,0,0,0))
+# 
+# # Then, either of these two approaches can be used: eBayes or Trend:
+# 
+# # The "eBayes" method assess average variability over all genes
+# ds.contrast <- eBayes(ds.contrast, trend = TRUE)
+# 
+# # The "treat" method does the same as eBayes but also incorporates fold change into
+# # the computation of p-value
+# ds.contrast <- treat(ds.contrast, trend = TRUE)
+# 
+# # And, to check the results:
+# limma_result <- toptable(ds.contrast,
+#                          number = 20000,
+#                          adjust.method = "BH",
+#                          sort.by = "p",
+#                          p.value = 0.05)
+```
+
+### Annotation and output table
+This block is to add the names and description of the genes.
+```{r, echo=FALSE}
+#####################
+# Adding gene names #
+#####################
+genemap <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "description"),
+                 filters = "ensembl_gene_id",
+                 values = rownames(limma_result),
+                 mart = useMart("ensembl", dataset = "hsapiens_gene_ensembl"))
+
+idx <- match(rownames(limma_result), genemap$ensembl_gene_id)
+limma_result$symbol <- genemap$hgnc_symbol[idx]
+limma_result$description <- genemap$description[idx]
+
+# Save the results in a CSV table
+write.csv(as.data.frame(limma_result), file = "limma-voom_Mets_vs_Prims_(byNorm)_FDR.csv")
+```
+
+### 4. Plots
+```{r, echo=FALSE}
+# These plots:
+# - Volcano plot
+# - HeatMap
+# - Box and scatter plot by gene
+# - Histogram of p-values
+# - MA Plot
+# Are available in my previous guide: https://github.com/SimonLab-RU/DEseq2
