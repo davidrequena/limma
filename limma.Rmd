@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Guide for the Differential Expression Analysis of RNAseq data using limma-voom
-# Including also a commented section about the limma-trend approach
+## Including also a commented section about the limma-trend approach
 
 ## 1. SET UP
 
