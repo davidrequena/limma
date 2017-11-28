@@ -276,4 +276,4 @@ write.csv(as.data.frame(limma_result), file = "limma-voom_Mets_vs_Prims_(byNorm)
 # - Box and scatter plot by gene
 # - Histogram of p-values
 # - MA Plot
-# Are available in our previous guide: https://github.com/SimonLab-RU/DEseq2
+# Are available in our previous guide: https://github.com/SimonLab-RU/DESeq2
