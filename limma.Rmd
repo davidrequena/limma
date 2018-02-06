@@ -206,7 +206,13 @@ transf.voom <- voom(ds.limma.f, design = mm, plot=TRUE)
 ds.fit <- lmFit(transf.voom, design = mm)
 colnames(ds.fit)
 
-# Specifying the contrast of interest
+# Specifying the contrast of interest:
+# 1) primary vs normal
+# 2) metastasis vs normal
+# 3) metastasis-normal vs primary-normal = metastasis vs primary
+
+# ds.contrast <- contrasts.fit(ds.fit, coef=2)
+# ds.contrast <- contrasts.fit(ds.fit, coef=3)
 ds.contrast <- contrasts.fit(ds.fit, contrasts = c(0,-1,1,0,0,0,0,0,0,0,0,0,0,0))
 
 # Compute statistics
@@ -265,7 +271,9 @@ limma_result$symbol <- genemap$hgnc_symbol[idx]
 limma_result$description <- genemap$description[idx]
 
 # Save the results in a CSV table
-write.csv(as.data.frame(limma_result), file = "limma-voom_Mets_vs_Prims_(byNorm)_FDR.csv")
+# write.csv(as.data.frame(limma_result), file = "limma-voom_Prim_vs_Norm_FDR.csv")
+# write.csv(as.data.frame(limma_result), file = "limma-voom_Met_vs_Norm_FDR.csv")
+write.csv(as.data.frame(limma_result), file = "limma-voom_Met_vs_Prim_FDR.csv")
 ```
 
 ### 4. Plots
